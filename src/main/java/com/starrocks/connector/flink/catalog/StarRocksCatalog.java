@@ -20,6 +20,9 @@
 
 package com.starrocks.connector.flink.catalog;
 
+import com.starrocks.connector.flink.catalog.starrocks.FieldSchema;
+import com.starrocks.connector.flink.catalog.starrocks.TableSchema;
+import org.apache.flink.table.catalog.exceptions.CatalogException;
 import org.apache.flink.util.Preconditions;
 import org.apache.flink.util.StringUtils;
 
@@ -35,6 +38,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
@@ -232,6 +236,63 @@ public class StarRocksCatalog implements Serializable {
                             .build();
         }
         return Optional.ofNullable(starRocksTable);
+    }
+
+    /**
+     * check if a table exists in this databse.
+     */
+    public boolean tableExists(String database, String table){
+        List<String> tableList = executeSingleColumnStatement(
+                "SELECT TABLE_NAME FROM information_schema.`TABLES` " +
+                        "WHERE TABLE_SCHEMA=? and TABLE_NAME=?",
+                database,
+                table
+        );
+        return !tableList.isEmpty();
+    }
+
+    private List<String> executeSingleColumnStatement(String sql, Object... params) {
+        try (Connection conn = getConnection();
+             PreparedStatement statement = conn.prepareStatement(sql)) {
+            List<String> columnValues = new ArrayList<>();
+            if (params != null) {
+                for (int i = 0; i < params.length; i++) {
+                    statement.setObject(i + 1, params[i]);
+                }
+            }
+            try (ResultSet rs = statement.executeQuery()) {
+                while (rs.next()) {
+                    String columnValue = rs.getString(1);
+                    columnValues.add(columnValue);
+                }
+            }
+            return columnValues;
+        } catch (Exception e) {
+            throw new CatalogException(
+                    String.format("Failed to execute sql: %s", sql), e);
+        }
+    }
+
+    /**
+     * according to mysql schema, create a table
+     * @param schema
+     */
+    public void createTable(TableSchema schema) {
+        String ddl = buildCreateTableDDL(schema);
+        LOG.info("Create table with ddl:{}", ddl);
+        try {
+            executeUpdateStatement(ddl);
+            LOG.info("Success to create table {}.{}, sql: {}",
+                    schema.getDatabase(), schema.getTable(), ddl);
+        } catch (Exception e) {
+            LOG.error("Failed to create table {}.{}, sql: {}",
+                    schema.getDatabase(), schema.getTable(), ddl, e);
+            throw new StarRocksCatalogException(
+                    String.format(
+                            "Failed to create table %s.%s",
+                            schema.getDatabase(), schema.getTable()),
+                    e);
+        }
     }
 
     /**
@@ -481,6 +542,95 @@ public class StarRocksCatalog implements Serializable {
     private String buildCreateDatabaseSql(String databaseName, boolean ignoreIfExists) {
         return String.format(
                 "CREATE DATABASE %s%s;", ignoreIfExists ? "IF NOT EXISTS " : "", databaseName);
+    }
+
+    public String buildCreateTableDDL(TableSchema schema) {
+        StringBuilder sb = new StringBuilder("CREATE TABLE IF NOT EXISTS ");
+        sb.append(identifier(schema.getDatabase()))
+                .append(".")
+                .append(identifier(schema.getTable()))
+                .append("(");
+
+        Map<String, FieldSchema> fields = schema.getFields();
+        List<String> keys = schema.getKeys();
+        //append keys
+        for(String key : keys){
+            if(!fields.containsKey(key)){
+                throw new StarRocksCatalogException("key " + key + " not found in column list");
+            }
+            FieldSchema field = fields.get(key);
+            buildColumn(sb, field);
+        }
+
+        //append values
+        for (Map.Entry<String, FieldSchema> entry : fields.entrySet()) {
+            if(keys.contains(entry.getKey())){
+                continue;
+            }
+            FieldSchema field = entry.getValue();
+            buildColumn(sb, field);
+        }
+        sb = sb.deleteCharAt(sb.length() -1);
+        sb.append(" ) ");
+        //append model
+        sb.append(schema.getModel().name())
+                .append(" KEY(")
+                .append(String.join(",", identifier(schema.getKeys())))
+                .append(")");
+
+        //append table comment
+        if(!StringUtils.isNullOrWhitespaceOnly(schema.getTableComment())){
+            sb.append(" COMMENT '")
+                    .append(schema.getTableComment())
+                    .append("' ");
+        }
+
+        //append distribute key
+        sb.append(" DISTRIBUTED BY HASH(")
+                .append(String.join(",", identifier(schema.getDistributeKeys())))
+                .append(") ");  // SR
+
+        //append properties
+        int index = 0;
+        for (Map.Entry<String, String> entry : schema.getProperties().entrySet()) {
+            if (index == 0) {
+                sb.append(" PROPERTIES (");
+            }
+            if (index > 0) {
+                sb.append(",");
+            }
+            sb.append(quoteProperties(entry.getKey()))
+                    .append("=")
+                    .append(quoteProperties(entry.getValue()));
+            index++;
+
+            if (index == schema.getProperties().size()) {
+                sb.append(")");
+            }
+        }
+        return sb.toString();
+    }
+
+    private void buildColumn(StringBuilder sql, FieldSchema field){
+        sql.append(identifier(field.getName()))
+                .append(" ")
+                .append(field.getTypeString())
+                .append(" COMMENT '")
+                .append(field.getComment())
+                .append("',");
+    }
+
+    private List<String> identifier(List<String> name) {
+        List<String> result = name.stream().map(m -> identifier(m)).collect(Collectors.toList());
+        return result;
+    }
+
+    private String identifier(String name) {
+        return "`" + name + "`";
+    }
+
+    private String quoteProperties(String name) {
+        return "'" + name + "'";
     }
 
     private String buildCreateTableSql(StarRocksTable table, boolean ignoreIfExists) {

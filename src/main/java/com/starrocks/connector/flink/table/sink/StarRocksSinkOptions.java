@@ -61,6 +61,7 @@ public class StarRocksSinkOptions implements Serializable {
     private static final String FORMAT_KEY = "format";
 
     // required sink configurations
+    public static final ConfigOption<String> FENODES = ConfigOptions.key("fenodes").stringType().noDefaultValue().withDescription("starrocks fe http address.");
     public static final ConfigOption<String> JDBC_URL = ConfigOptions.key("jdbc-url")
             .stringType().noDefaultValue().withDescription("Url of the jdbc like: `jdbc:mysql://fe_ip1:query_port,fe_ip2:query_port...`.");
     public static final ConfigOption<List<String>> LOAD_URL = ConfigOptions.key("load-url")
@@ -86,7 +87,7 @@ public class StarRocksSinkOptions implements Serializable {
             .intType().defaultValue(30000).withDescription("Timeout in millisecond for connecting to the `load-url`.");
 
     public static final ConfigOption<Integer> SINK_SOCKET_TIMEOUT = ConfigOptions.key("sink.socket.timeout-ms")
-            .intType().defaultValue(-1).withDescription("Timeout in milliseconds that the http client waits for data or, put differently, " +
+            .intType().defaultValue(60000).withDescription("Timeout in milliseconds that the http client waits for data or, put differently, " +
                     "a maximum period inactivity between two consecutive data packets. The default value -1 is same as that of apache http " +
                     "client which is interpreted as undefined (system default if applicable). A timeout value of zero is interpreted as " +
                     "an infinite timeout. You can use this option to fail the stream load from the connector side if the http client does not " +

@@ -38,12 +38,24 @@ public class StarRocksJdbcConnectionOptions  implements Serializable {
     @Nullable
     protected final String password;
 
+    protected final String fenodes;
+
     public StarRocksJdbcConnectionOptions(String url, String username, String password) {
         this.url = Preconditions.checkNotNull(url, "jdbc url is empty");
         this.driverName = "com.mysql.jdbc.Driver";
         this.cjDriverName = "com.mysql.cj.jdbc.Driver";
         this.username = username;
         this.password = password;
+        this.fenodes = null;
+    }
+
+    public StarRocksJdbcConnectionOptions(String fenodes, String username, String password, String url){
+        this.fenodes = fenodes;
+        this.username = username;
+        this.password = password;
+        this.url = url;
+        this.driverName = "com.mysql.jdbc.Driver";
+        this.cjDriverName = "com.mysql.cj.jdbc.Driver";
     }
 
     public String getDbURL() {
